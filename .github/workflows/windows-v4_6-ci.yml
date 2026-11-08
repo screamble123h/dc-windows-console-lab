@@ -1,0 +1,111 @@
+name: DC v4.6 - Windows hosted functional evidence (NO deployment)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dc-v4-6-windows-ci
+  cancel-in-progress: false
+
+jobs:
+  windows-functional:
+    # Never start paid private-repository jobs. Public GitHub-hosted STANDARD runner only.
+    if: ${{ github.event.repository.private == false && github.event.repository.visibility == 'public' }}
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      FOTOMAG_ISOLATED_WINDOWS_LAB: 'YES'
+      FOTOMAG_VM_EVIDENCE_SAFE: 'YES'
+      CI: 'true'
+    steps:
+      - name: Checkout SANITIZED PUBLIC LAB ONLY
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Use Go 1.24
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Use Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Scan staged public source for internal identifiers
+        shell: pwsh
+        run: python ci/check_public_safety.py
+      - name: Verify public-standard-hosted guard; clone exact upstream v0.3.1
+        shell: pwsh
+        run: |
+          if ('${{ github.event.repository.visibility }}' -ne 'public' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows') { throw 'PUBLIC_STANDARD_WINDOWS_RUNNER_ONLY' }
+          git clone --depth 1 --branch v0.3.1 https://github.com/wonderwhy-er/DesktopCommanderMCP.git upstream-baseline
+          if ($LASTEXITCODE -ne 0) { throw 'BASELINE_CLONE_FAILED' }
+          git clone --depth 1 --branch v0.3.1 https://github.com/wonderwhy-er/DesktopCommanderMCP.git upstream-patched
+          if ($LASTEXITCODE -ne 0) { throw 'PATCHED_CLONE_FAILED' }
+          $blob = (& git -C upstream-baseline hash-object src/utils/shell.ts).Trim()
+          if ($blob -ne '3d9c46e4a440afd8062cebf70864452bc1156d39') { throw "UPSTREAM_SOURCE_MISMATCH: $blob" }
+          $patch = (Join-Path $env:GITHUB_WORKSPACE 'lab/SOURCE_PATCH_v0.3.1_PUBLIC_CI.patch')
+          git -C upstream-patched apply --check $patch
+          if ($LASTEXITCODE -ne 0) { throw 'PATCH_APPLY_CHECK_FAILED' }
+          git -C upstream-patched apply $patch
+          if ($LASTEXITCODE -ne 0) { throw 'PATCH_APPLY_FAILED' }
+          $first = (Get-FileHash -Algorithm SHA256 upstream-patched/native/windows-headless-broker/main_windows.go).Hash
+          $second = (Get-FileHash -Algorithm SHA256 lab/native/windows-headless-broker/main_windows.go).Hash
+          if ($first -ne $second) { throw 'SANITIZED_GO_PATCH_MISMATCH' }
+      - name: Build baseline, patched upstream and Go broker
+        shell: pwsh
+        run: |
+          Push-Location upstream-baseline
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'BASELINE_NPM_CI_FAILED' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'BASELINE_BUILD_FAILED' }
+          Pop-Location
+          Push-Location upstream-patched
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'PATCHED_NPM_CI_FAILED' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'PATCHED_BUILD_FAILED' }
+          Pop-Location
+          New-Item -ItemType Directory -Force lab/baseline/dist/utils,lab/dist/utils,evidence | Out-Null
+          Copy-Item -Force upstream-baseline/dist/utils/shell.js lab/baseline/dist/utils/shell.js
+          Copy-Item -Force upstream-patched/dist/utils/shell.js lab/dist/utils/shell.js
+          Copy-Item -Force upstream-patched/dist/utils/windows-direct-spawn.js lab/dist/utils/windows-direct-spawn.js
+          Copy-Item -Force upstream-patched/dist/utils/windows-headless-broker.js lab/dist/utils/windows-headless-broker.js
+          go build -trimpath -o lab/native/windows-headless-broker/fotomag-headless-broker-win64.exe lab/native/windows-headless-broker/main_windows.go
+          if ($LASTEXITCODE -ne 0) { throw 'GO_BROKER_BUILD_FAILED' }
+      - name: Run adapted planner unit tests and describe GUI session
+        shell: pwsh
+        run: |
+          node --test lab/test/windows-direct-spawn-planner.test.mjs lab/test/windows-headless-broker-planner.test.mjs lab/test/node-stdio-isolation.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'PLANNER_UNIT_TEST_FAILED' }
+          python ci/probe_windows_session.py
+          if ($LASTEXITCODE -ne 0) { throw 'GUI_PROBE_FAILED' }
+      - name: Perform 100 original and 100 patched Windows functional trials
+        shell: pwsh
+        run: |
+          python ci/run_functional_windows.py
+          if ($LASTEXITCODE -ne 0) { throw 'FUNCTIONAL_MATRIX_FAILED_READ_ARTIFACT' }
+      - name: Smoke real Desktop Commander startProcess tool API (original and patch)
+        shell: pwsh
+        run: |
+          python ci/run_tool_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw 'REAL_TOOL_API_SMOKE_FAILED_READ_ARTIFACT' }
+      - name: Strict final verdict (never claims GUI or Remote MCP proof)
+        if: always()
+        shell: pwsh
+        run: python ci/final_verdict.py
+      - name: Upload bounded Windows trial evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dc-v4-6-windows-functional-evidence
+          path: evidence/
+          retention-days: 1
+          if-no-files-found: warn

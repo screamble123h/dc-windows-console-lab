@@ -1,0 +1,603 @@
+diff --git a/native/windows-headless-broker/main_nonwindows.go b/native/windows-headless-broker/main_nonwindows.go
+new file mode 100644
+index 0000000..42a80aa
+--- /dev/null
++++ b/native/windows-headless-broker/main_nonwindows.go
+@@ -0,0 +1,4 @@
++//go:build !windows
++package main
++import "fmt"
++func main(){fmt.Println("WINDOWS_GUI_LAB_ONLY; no process executed")}
+diff --git a/native/windows-headless-broker/main_windows.go b/native/windows-headless-broker/main_windows.go
+new file mode 100644
+index 0000000..7700223
+--- /dev/null
++++ b/native/windows-headless-broker/main_windows.go
+@@ -0,0 +1,256 @@
++//go:build windows
++
++// EXPERIMENTAL: independently isolated Windows GUI lab ONLY.
++// This helper is NOT authorized to run on the FotoMag production computer.
++// It receives a validated target process plan as Base64URL(JSON) in argv[1],
++// creates a separate, non-active Windows desktop, and launches the target on
++// that desktop with the same inherited stdin/stdout/stderr pipes.
++// An optional job object can kill only this helper's child tree on shutdown.
++package main
++
++import (
++    "crypto/rand"
++    "encoding/base64"
++    "encoding/hex"
++    "encoding/json"
++    "errors"
++    "fmt"
++    "os"
++    "path/filepath"
++    "strings"
++    "syscall"
++    "unsafe"
++)
++
++const (
++    desktopAllAccess = 0x000F01FF
++    createNoWindow uint32 = 0x08000000
++    createSuspended uint32 = 0x00000004
++    startfUseStdHandles uint32 = 0x00000100
++    startfUseShowWindow uint32 = 0x00000001
++    swHide uint16 = 0
++    jobObjectExtendedLimitInformation = 9
++    jobObjectLimitKillOnJobClose uint32 = 0x00002000
++    failureExitCode = 120
++    maxEncodedPayload = 24000
++)
++
++type payload struct {
++    Protocol int `json:"protocol"`
++    Executable string `json:"executable"`
++    Args []string `json:"args"`
++    Verbatim bool `json:"verbatim"`
++    KillTree bool `json:"killTree,omitempty"`
++}
++
++type basicLimitInformation struct {
++    PerProcessUserTimeLimit int64
++    PerJobUserTimeLimit int64
++    LimitFlags uint32
++    MinimumWorkingSetSize uintptr
++    MaximumWorkingSetSize uintptr
++    ActiveProcessLimit uint32
++    Affinity uintptr
++    PriorityClass uint32
++    SchedulingClass uint32
++}
++
++type ioCounters struct {
++    ReadOperationCount uint64
++    WriteOperationCount uint64
++    OtherOperationCount uint64
++    ReadTransferCount uint64
++    WriteTransferCount uint64
++    OtherTransferCount uint64
++}
++
++type extendedLimitInformation struct {
++    BasicLimitInformation basicLimitInformation
++    IoInfo ioCounters
++    ProcessMemoryLimit uintptr
++    JobMemoryLimit uintptr
++    PeakProcessMemoryUsed uintptr
++    PeakJobMemoryUsed uintptr
++}
++
++var user32 = syscall.NewLazyDLL("user32.dll")
++var kernel32 = syscall.NewLazyDLL("kernel32.dll")
++var createDesktopW = user32.NewProc("CreateDesktopW")
++var closeDesktop = user32.NewProc("CloseDesktop")
++var createJobObjectW = kernel32.NewProc("CreateJobObjectW")
++var assignProcessToJobObject = kernel32.NewProc("AssignProcessToJobObject")
++var setInformationJobObject = kernel32.NewProc("SetInformationJobObject")
++var resumeThread = kernel32.NewProc("ResumeThread")
++
++func main() { os.Exit(run()) }
++
++func run() int {
++    _, hostErr := os.Hostname()
++    if hostErr != nil || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("RUNNER_OS") != "Windows" || os.Getenv("RUNNER_ENVIRONMENT") != "github-hosted" {
++        fail("production guard", errors.New("public GitHub-hosted Windows CI required"))
++        return failureExitCode
++    }
++    // Deliberately separate from DC_WINDOWS_HEADLESS_BROKER. Merely setting
++    // the feature flag cannot activate the binary outside an approved lab.
++    if os.Getenv("FOTOMAG_ISOLATED_WINDOWS_LAB") != "YES" ||
++       os.Getenv("FOTOMAG_VM_EVIDENCE_SAFE") != "YES" {
++        fail("lab guard", errors.New("independent Windows lab gates not confirmed"))
++        return failureExitCode
++    }
++    p, err := readPayload()
++    if err != nil { fail("payload", err); return failureExitCode }
++
++    // The desktop name contains no path separators. CreateDesktopW creates
++    // it in the current window station, without switching the active desktop.
++    name, err := uniqueDesktopName()
++    if err != nil { fail("desktop nonce", err); return failureExitCode }
++    desktopName, err := syscall.UTF16PtrFromString(name)
++    if err != nil { fail("desktop name", err); return failureExitCode }
++    hdesk, _, callErr := createDesktopW.Call(uintptr(unsafe.Pointer(desktopName)), 0, 0, 0, desktopAllAccess, 0)
++    if hdesk == 0 { fail("CreateDesktopW", callErr); return failureExitCode }
++    defer closeDesktop.Call(hdesk)
++
++    handles, err := duplicateStandardHandles()
++    if err != nil { fail("duplicate stdio", err); return failureExitCode }
++    defer func(){ for _, h := range handles { syscall.CloseHandle(h) } }()
++
++    var job syscall.Handle
++    if p.KillTree {
++        job, err = createOwnedJob()
++        if err != nil { fail("job creation", err); return failureExitCode }
++        defer syscall.CloseHandle(job)
++    }
++
++    commandLine := buildCommandLine(p)
++    lpExe, err := syscall.UTF16PtrFromString(p.Executable)
++    if err != nil { fail("executable UTF16", err); return failureExitCode }
++    lpCommand, err := syscall.UTF16PtrFromString(commandLine)
++    if err != nil { fail("command UTF16", err); return failureExitCode }
++    // Windows STARTUPINFO.lpDesktop selects a different desktop without
++    // SwitchDesktop. Child processes usually inherit their parent's desktop;
++    // independent GUI brokers/COM launches may not and REQUIRE GUI tests.
++    si := syscall.StartupInfo{}
++    si.Cb = uint32(unsafe.Sizeof(si))
++    si.Desktop = desktopName
++    si.Flags = startfUseStdHandles | startfUseShowWindow
++    si.ShowWindow = swHide
++    si.StdInput = handles[0]
++    si.StdOutput = handles[1]
++    si.StdErr = handles[2]
++
++    var pi syscall.ProcessInformation
++    // Create suspended so a child cannot launch descendants before optional
++    // job-object assignment. The helper has no relaunch/fallback code.
++    creationFlags := createSuspended | createNoWindow
++    err = syscall.CreateProcess(lpExe, lpCommand, nil, nil, true,
++        creationFlags, nil, nil, &si, &pi)
++    if err != nil { fail("CreateProcessW", err); return failureExitCode }
++    defer syscall.CloseHandle(pi.Process)
++    defer syscall.CloseHandle(pi.Thread)
++
++    if p.KillTree {
++        r, _, e := assignProcessToJobObject.Call(uintptr(job),uintptr(pi.Process))
++        if r == 0 {
++            syscall.TerminateProcess(pi.Process, failureExitCode)
++            fail("AssignProcessToJobObject",e)
++            return failureExitCode
++        }
++    }
++    writeLabEvidence(name, uint32(os.Getpid()), pi.ProcessId)
++    r, _, e := resumeThread.Call(uintptr(pi.Thread))
++    if r == 0xFFFFFFFF {
++        syscall.TerminateProcess(pi.Process, failureExitCode)
++        fail("ResumeThread",e)
++        return failureExitCode
++    }
++
++    event, err := syscall.WaitForSingleObject(pi.Process, syscall.INFINITE)
++    if err != nil || event != syscall.WAIT_OBJECT_0 {
++        // If wait fails, do not leave a child with an unobserved exit status.
++        syscall.TerminateProcess(pi.Process, failureExitCode)
++        fail("WaitForSingleObject",fmt.Errorf("event=%d err=%v",event,err))
++        return failureExitCode
++    }
++    var exitCode uint32
++    if err := syscall.GetExitCodeProcess(pi.Process, &exitCode); err != nil {
++        fail("GetExitCodeProcess",err)
++        return failureExitCode
++    }
++    return int(exitCode)
++}
++
++func writeLabEvidence(name string, brokerPID, childPID uint32) {
++    dir := os.Getenv("FOTOMAG_LAB_EVIDENCE_DIR")
++    if dir=="" {return}
++    if err:=os.MkdirAll(dir,0700);err!=nil{return}
++    nameOnly:=fmt.Sprintf("lab_pid_%d_%d.json",brokerPID,childPID)
++    file,err:=os.OpenFile(filepath.Join(dir,nameOnly),os.O_WRONLY|os.O_CREATE|os.O_EXCL,0600)
++    if err!=nil{return}
++    defer file.Close()
++    _=json.NewEncoder(file).Encode(map[string]any{"broker_pid":brokerPID,"target_pid":childPID,"hidden_desktop":name})
++}
++
++func fail(where string, err error) { fmt.Fprintf(os.Stderr, "FOTOMAG_HEADLESS_BROKER_ERROR[%s]: %v\n", where, err) }
++
++func uniqueDesktopName() (string,error) {
++    var n [12]byte
++    if _, err := rand.Read(n[:]); err != nil { return "",err }
++    return fmt.Sprintf("FMDCLab_%d_%s",os.Getpid(),hex.EncodeToString(n[:])),nil
++}
++
++func readPayload() (payload,error) {
++    var p payload
++    if len(os.Args)!=2 { return p,errors.New("expected exactly one encoded payload") }
++    if len(os.Args[1])>maxEncodedPayload { return p,errors.New("payload length limit") }
++    raw,err:=base64.RawURLEncoding.DecodeString(os.Args[1]); if err!=nil { return p,err }
++    if err=json.Unmarshal(raw,&p);err!=nil{return p,err}
++    if p.Protocol!=1 {return p,errors.New("unsupported protocol")}
++    if !filepath.IsAbs(p.Executable)||!strings.EqualFold(filepath.Ext(p.Executable),".exe"){
++        return p,errors.New("absolute EXE required")
++    }
++    if _,err:=os.Stat(p.Executable);err!=nil{return p,fmt.Errorf("target missing: %w",err)}
++    for _,a:=range p.Args { if strings.ContainsRune(a,0) {return p,errors.New("NUL in argument")}}
++    return p,nil
++}
++
++func duplicateStandardHandles() ([3]syscall.Handle,error) {
++    var out [3]syscall.Handle
++    ids:=[3]int{syscall.STD_INPUT_HANDLE,syscall.STD_OUTPUT_HANDLE,syscall.STD_ERROR_HANDLE}
++    current,err:=syscall.GetCurrentProcess();if err!=nil{return out,err}
++    for i,id:=range ids {
++        h,err:=syscall.GetStdHandle(id)
++        if err!=nil||h==0||h==syscall.InvalidHandle {
++            for j:=0;j<i;j++{syscall.CloseHandle(out[j])}
++            return out,fmt.Errorf("bad inherited stdio %d: %v",i,err)
++        }
++        if err=syscall.DuplicateHandle(current,h,current,&out[i],0,true,syscall.DUPLICATE_SAME_ACCESS);err!=nil{
++            for j:=0;j<i;j++{syscall.CloseHandle(out[j])}
++            return out,err
++        }
++    }
++    return out,nil
++}
++
++func buildCommandLine(p payload) string {
++    // For regular executables, use Windows/Go commandline escaping.
++    // For CMD, mirror Node spawn(windowsVerbatimArguments:true), preserving
++    // exactly the raw /c command string. Only a Windows GUI lab can verify
++    // the exact semantics for unusual cmd quoting combinations.
++    parts:=[]string{syscall.EscapeArg(p.Executable)}
++    for _,a:=range p.Args {
++        if p.Verbatim {parts=append(parts,a)}else{parts=append(parts,syscall.EscapeArg(a))}
++    }
++    return strings.Join(parts," ")
++}
++
++func createOwnedJob() (syscall.Handle,error) {
++    r,_,e:=createJobObjectW.Call(0,0)
++    if r==0{return 0,e}
++    job:=syscall.Handle(r)
++    lim:=extendedLimitInformation{}
++    lim.BasicLimitInformation.LimitFlags=jobObjectLimitKillOnJobClose
++    ok,_,err:=setInformationJobObject.Call(uintptr(job),jobObjectExtendedLimitInformation,
++        uintptr(unsafe.Pointer(&lim)),unsafe.Sizeof(lim))
++    if ok==0 {syscall.CloseHandle(job);return 0,err}
++    return job,nil
++}
+diff --git a/src/utils/shell.ts b/src/utils/shell.ts
+index 3d9c46e..0990105 100644
+--- a/src/utils/shell.ts
++++ b/src/utils/shell.ts
+@@ -1,6 +1,8 @@
+ import fs from 'fs';
+ import os from 'os';
+ import path from 'path';
++import { planWindowsDirectSpawn } from './windows-direct-spawn.js';
++import { optionalHeadlessBroker } from './windows-headless-broker.js';
+ 
+ /**
+  * Single source of truth for shells: which shell is the default on this
+@@ -156,60 +158,79 @@ export interface ShellSpawnConfig {
+  * This handles login shell flags for different shell types
+  */
+ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpawnConfig {
++  // Prevalidated tool command is the caller's responsibility: this helper
++  // never relaxes blockedCommands, just selects the process-creation path.
++  const finish = (config: ShellSpawnConfig): ShellSpawnConfig =>
++    optionalHeadlessBroker(config, shellPath, command, isWindows());
+   const shellName = path.basename(shellPath).toLowerCase();
+   const executable = resolveProgramPath(shellPath);
+ 
++  // Avoid a second console-capable shell for simple same-shell invocations
++  // (#443/#909), and avoid an implicit PowerShell/CMD wrapper when the caller
++  // explicitly requested a literal native .exe. This is intentionally narrow:
++  // complex, quoted-argument, or multiline commands retain existing semantics.
++  // Command validation remains at the start_process boundary, BEFORE this step.
++  const direct = planWindowsDirectSpawn(command, executable, resolveShellPath, isWindows());
++  if (direct) {
++    return finish({
++      executable: direct.executable,
++      args: direct.args,
++      windowsVerbatim: direct.windowsVerbatim,
++      useShellOption: false
++    });
++  }
++
+   // Unix shells with login flag support
+   if (shellName.includes('bash') || shellName.includes('zsh')) {
+-    return {
++    return finish({
+       executable,
+       args: ['-l', '-c', command],
+       useShellOption: false
+-    };
++    });
+   }
+ 
+   // PowerShell Core (cross-platform, supports -Login)
+   if (shellName === 'pwsh' || shellName === 'pwsh.exe') {
+-    return {
++    return finish({
+       executable,
+       args: ['-Login', '-Command', command],
+       useShellOption: false
+-    };
++    });
+   }
+ 
+   // Windows PowerShell 5.1 (no login flag support)
+   if (shellName === 'powershell' || shellName === 'powershell.exe') {
+-    return {
++    return finish({
+       executable,
+       args: ['-Command', command],
+       useShellOption: false
+-    };
++    });
+   }
+ 
+   // CMD
+   if (shellName === 'cmd' || shellName === 'cmd.exe') {
+-    return {
++    return finish({
+       executable,
+       args: ['/c', command],
+       windowsVerbatim: true,
+       useShellOption: false
+-    };
++    });
+   }
+ 
+   // Fish shell (uses -l for login, -c for command)
+   if (shellName.includes('fish')) {
+-    return {
++    return finish({
+       executable,
+       args: ['-l', '-c', command],
+       useShellOption: false
+-    };
++    });
+   }
+ 
+   // Unknown/other shells - use shell option for safety
+   // This provides a fallback for shells we don't explicitly handle
+-  return {
++  return finish({
+     executable: command,
+     args: [],
+     useShellOption: executable
+-  };
++  });
+ }
+diff --git a/src/utils/windows-direct-spawn.ts b/src/utils/windows-direct-spawn.ts
+new file mode 100644
+index 0000000..7123464
+--- /dev/null
++++ b/src/utils/windows-direct-spawn.ts
+@@ -0,0 +1,106 @@
++import path from 'path';
++
++/**
++ * Conservative, stateless planning for Windows one-process launches.
++ *
++ * The caller MUST keep validating the original command against blockedCommands
++ * BEFORE using this result. A null result means preserving the existing shell
++ * wrapper, not rejecting the user's command or changing its interpretation.
++ *
++ * Windows-specific handling is explicit so the planner itself can be tested
++ * on Linux; this does NOT simulate Windows process or window behavior.
++ */
++export interface WindowsDirectSpawn {
++  executable: string;
++  args: string[];
++  windowsVerbatim: boolean;
++  reason: 'same-shell' | 'explicit-native-exe';
++}
++
++const SAFE_WORD = /^[A-Za-z0-9_.:\/\\-]+$/;
++const UNSAFE_EXECUTABLE = /["'`$;|&<>(){}\[\]!%\u0000-\u001f]/;
++const NATIVE_SHELLS = new Set(['powershell', 'pwsh', 'cmd']);
++
++/**
++ * Only an unquoted literal executable token followed by
++ * zero or more simple words. No redirection, pipelines, variable expansion,
++ * quotes in arguments, CR/LF, command substitution, or shell metacharacters.
++ *
++ * Quoted executable paths are deliberately excluded: the upstream command
++ * validator cannot reliably identify an executable inside a quoted path
++ * containing spaces, so optimizing it could bypass blockedCommands.
++ */
++export function parseLiteralWindowsInvocation(command: string): { executable: string; args: string[] } | null {
++  if (/[\r\n]/.test(command)) return null;
++  const text = command.trim();
++  if (!text) return null;
++
++  // Require a fully unquoted executable: preserves the existing command
++  // validator semantics even for disallowed binaries in paths with spaces.
++  const firstSpace = text.search(/\s/);
++  const executable = firstSpace === -1 ? text : text.slice(0, firstSpace);
++  const rest = firstSpace === -1 ? '' : text.slice(firstSpace);
++
++  if (!executable || UNSAFE_EXECUTABLE.test(executable)) return null;
++  // No quotes or whitespace are interpreted as executable/argument syntax.
++  const argsText = rest.trim();
++  const args = argsText ? argsText.split(/\s+/) : [];
++  if (!args.every(arg => SAFE_WORD.test(arg))) return null;
++  if (!argsText && rest && !/^\s*$/.test(rest)) return null;
++  return { executable, args };
++}
++
++/**
++ * Compare canonical Windows path strings without relying on the test host OS.
++ * Resolution and existence checks are intentionally injected from the caller;
++ * the adapter must only return existing executable files, never an arbitrary
++ * unverified name or .cmd/.bat script.
++ */
++function sameResolvedWindowsExecutable(a: string, b: string): boolean {
++  return path.win32.normalize(a).toLowerCase() === path.win32.normalize(b).toLowerCase();
++}
++
++export function planWindowsDirectSpawn(
++  command: string,
++  configuredExecutable: string,
++  resolveExistingExecutable: (requested: string) => string | null,
++  windowsHost: boolean,
++): WindowsDirectSpawn | null {
++  if (!windowsHost) return null;
++  const parsed = parseLiteralWindowsInvocation(command);
++  if (!parsed) return null;
++
++  const invokedBase = path.win32.basename(parsed.executable).toLowerCase();
++  const configuredBase = path.win32.basename(configuredExecutable).toLowerCase().replace(/\.exe$/, '');
++  const invokedBare = invokedBase.replace(/\.exe$/, '');
++  // Do not reinterpret commands under Bash, Fish, custom shells or WSL.
++  if (!NATIVE_SHELLS.has(configuredBase)) return null;
++  const isConfiguredShell = invokedBare === configuredBase;
++
++  // Avoid changing PowerShell cmdlet/alias semantics for bare programs. Only
++  // explicit .exe command names have the optional direct-native execution path.
++  const isExplicitExe = /\.exe$/i.test(invokedBase);
++  if (!isConfiguredShell && !isExplicitExe) return null;
++
++  let resolved: string | null;
++  try {
++    resolved = resolveExistingExecutable(parsed.executable);
++  } catch {
++    return null;
++  }
++  if (!resolved || !path.win32.isAbsolute(resolved) || !/\.exe$/i.test(resolved)) return null;
++
++  if (isConfiguredShell && !sameResolvedWindowsExecutable(resolved, configuredExecutable)) {
++    // A different executable with the same name must not impersonate the
++    // configured shell; leave its exact invocation to the established parser.
++    return null;
++  }
++  // For explicit .exe commands the resolver must verify the file exists.
++  // In particular never direct-spawn .bat/.cmd or a PowerShell function name.
++  return {
++    executable: resolved,
++    args: parsed.args,
++    windowsVerbatim: path.win32.basename(resolved).toLowerCase() === 'cmd.exe',
++    reason: isConfiguredShell ? 'same-shell' : 'explicit-native-exe',
++  };
++}
+diff --git a/src/utils/windows-headless-broker.ts b/src/utils/windows-headless-broker.ts
+new file mode 100644
+index 0000000..a2ca5e9
+--- /dev/null
++++ b/src/utils/windows-headless-broker.ts
+@@ -0,0 +1,108 @@
++import fs from 'fs';
++import path from 'path';
++
++/**
++ * EXPERIMENTAL - must NOT be enabled on a production workstation until
++ * independently verified in a Windows GUI lab. The environment variable
++ * DC_WINDOWS_HEADLESS_BROKER is the opt-in flag (literal "1").
++ *
++ * This planner is deliberately pure for isolated non-Windows tests. It only
++ * builds the transport arguments; it does not create a Windows desktop itself.
++ */
++export interface BrokerSpawnConfig {
++  executable: string;
++  args: string[];
++  windowsVerbatim?: boolean;
++  useShellOption: string | boolean;
++}
++
++export interface BrokerPayload {
++  protocol: 1;
++  executable: string;
++  args: string[];
++  verbatim: boolean;
++  killTree?: boolean;
++}
++
++/** Shell payload uses -EncodedCommand only *inside* the optional desktop broker.
++ * This preserves the exact UTF-16 code units of multiline PowerShell text,
++ * rather than reparsing newline boundaries as argv. The original plain text
++ * remains available to Desktop Commander's pre-spawn command validator/logs.
++ */
++export function encodeMultilinePowerShell(
++  configuredShell: string,
++  script: string,
++  isWindows: boolean,
++): string[] | null {
++  const base = path.win32.basename(configuredShell).toLowerCase();
++  if (!isWindows || !['powershell', 'powershell.exe', 'pwsh', 'pwsh.exe'].includes(base)) return null;
++  if (!/[\r\n]/.test(script)) return null;
++  if (script.includes('\u0000')) return null;
++  const encoded = Buffer.from(script, 'utf16le').toString('base64');
++  // `CreateProcessW` command line is limited to 32,767 UTF-16 code units;
++  // leave ample room for the broker's Base64 JSON envelope and path.
++  if (encoded.length > 15000) return null;
++  return ['-EncodedCommand', encoded];
++}
++
++/** Wrap an existing (already-validated) Windows spawn plan in a broker.
++ * Refuse invalid/missing broker binaries; do not silently fall back to a
++ * possibly visible PowerShell window after the owner opted in to containment.
++ * Returns null when disabled or when the OS is not Windows.
++ */
++export function planHeadlessBroker(
++  original: BrokerSpawnConfig,
++  brokerPath: string,
++  enabled: boolean,
++  isWindows: boolean,
++  fileExists: (p: string) => boolean = fs.existsSync,
++  killTree = false,
++): BrokerSpawnConfig | null {
++  if (!isWindows || !enabled) return null;
++  if (typeof brokerPath !== 'string' || !path.win32.isAbsolute(brokerPath) || !/\.exe$/i.test(brokerPath)) {
++    throw new Error('FOTOMAG_HEADLESS_BROKER_INVALID_PATH');
++  }
++  if (!fileExists(brokerPath)) throw new Error('FOTOMAG_HEADLESS_BROKER_NOT_INSTALLED');
++  if (original.useShellOption !== false) throw new Error('FOTOMAG_HEADLESS_BROKER_SHELL_FALLBACK_UNSUPPORTED');
++  if (!path.win32.isAbsolute(original.executable) || !/\.exe$/i.test(original.executable)) {
++    throw new Error('FOTOMAG_HEADLESS_TARGET_MUST_BE_VERIFIED_EXE');
++  }
++  const payload: BrokerPayload = {
++    protocol: 1,
++    executable: original.executable,
++    args: [...original.args],
++    verbatim: original.windowsVerbatim === true,
++    killTree,
++  };
++  const argv64 = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
++  if (argv64.length > 24000) throw new Error('FOTOMAG_HEADLESS_BROKER_PAYLOAD_TOO_LONG');
++  return { executable: brokerPath, args: [argv64], useShellOption: false, windowsVerbatim: false };
++}
++
++/**
++ * Build the optional plan without touching server configuration. Default is
++ * deliberately OFF, so existing v0.3.1 behavior is preserved until an
++ * independent Windows GUI machine demonstrates safety and compatibility.
++ */
++export function optionalHeadlessBroker(
++  original: BrokerSpawnConfig,
++  configuredShellPath: string,
++  originalCommand: string,
++  windowsHost: boolean,
++  env: NodeJS.ProcessEnv = process.env,
++  fileExists: (p: string) => boolean = fs.existsSync,
++): BrokerSpawnConfig {
++  if (!windowsHost || env.DC_WINDOWS_HEADLESS_BROKER !== '1') return original;
++  const nativeShell = path.win32.basename(configuredShellPath).toLowerCase().replace(/\.exe$/, '');
++  if (!['powershell', 'pwsh', 'cmd'].includes(nativeShell)) {
++    throw new Error('FOTOMAG_HEADLESS_BROKER_NATIVE_SHELL_ONLY');
++  }
++  let selected = original;
++  // For multiline PowerShell commands, avoid cmdline metachar/quote changes;
++  // do not create another shell; pass the exact script as UTF-16LE Base64.
++  const encoded = encodeMultilinePowerShell(configuredShellPath, originalCommand, windowsHost);
++  if (encoded && path.win32.basename(original.executable).toLowerCase() === path.win32.basename(configuredShellPath).toLowerCase()) {
++    selected = { ...original, args: encoded };
++  }
++  return planHeadlessBroker(selected, env.DC_WINDOWS_HEADLESS_BROKER_PATH ?? '', true, true, fileExists, env.DC_WINDOWS_HEADLESS_BROKER_KILL_TREE === '1')!;
++}

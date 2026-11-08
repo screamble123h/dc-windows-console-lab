@@ -1,0 +1,20 @@
+FotoMag TZ 4.8 — LOCAL PRECHECK (NOT WINDOWS GUI TEST)
+Independent environment: Linux x86-64; no Windows HWND/focus tests executed.
+Baseline input bundle v4.6 SHA256: 47415c9970886eb55197c64eb9cf3e01536c11902704a43e148d3a11c7c213dc
+Input ZIP CRC: PASS (34 file entries).
+Public lab source: original TZ 4.6 mechanisms; host identity guard changed to github-hosted Windows-only. Lab binary is therefore not bit-identical to v4.6.
+Workflow YAML parsed: PASS (manual workflow_dispatch, public job gate, standard windows-2022).
+Original v0.3.1 source + sanitized public patch: git apply --check PASS.
+Exact patched Go source vs staged sanitized Go source: bytewise PASS.
+Reverse patch check: PASS.
+Go Windows x64 cross-compile: PASS (PE32+ x86-64); not executed on Windows.
+Node.js tests using previously compiled v4.6 JS (Linux): 23/23 PASS, 0 FAIL.
+Python syntax: PASS.
+Node.js full_tool_smoke syntax check: PASS.
+Public content scan against internal hostname, Windows paths, emails, credential patterns: PASS.
+Execution guard run_functional_windows.py on Linux: REFUSED as intended.
+Real GitHub Actions runs: 0.
+Windows functional attempt counts: baseline 0/100, broker 0/100.
+Remote MCP E2E: NOT TESTED.
+Interactive desktop / GUI window / focus evidence: NOT TESTED.
+Production deployment: NO. DO NOT DEPLOY.

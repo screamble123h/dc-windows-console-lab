@@ -1,0 +1,14 @@
+{
+  "name": "fotomag-desktop-commander-windows-spawn-lab",
+  "version": "0.0.0-tz4-6-prototype",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.baseline.json",
+    "test": "npm run build && node --test test/*.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "22.16.0",
+    "typescript": "5.8.3"
+  }
+}

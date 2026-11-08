@@ -1,0 +1,10 @@
+{
+  "experiment": "TZ4.8 GitHub Actions public-runner comparison",
+  "source_bundle_sha256": "47415c9970886eb55197c64eb9cf3e01536c11902704a43e148d3a11c7c213dc",
+  "upstream_tag": "v0.3.1",
+  "upstream_shell_blob_sha1": "3d9c46e4a440afd8062cebf70864452bc1156d39",
+  "sanitization": "Only the laboratory host safeguards and tests are rewritten to restrict execution to github-hosted Windows runners. GUI, broker and shell logic otherwise from TZ4.6. Not binary-identical to original 4.6; do not claim final patch verified.",
+  "public_repo": true,
+  "no_customer_data": true,
+  "not_for_production": true
+}
