@@ -19,7 +19,8 @@ import xml.etree.ElementTree as ET
 CASES = {
     "MULTILINE_GIT": ("Write-Output 'TZ410_BEGIN'\r\n& git.exe --version 2>&1 | Select-Object -First 1\nWrite-Output 'TZ410_END'", 0, ('TZ410_BEGIN', 'TZ410_END')),
     "PROGRESS": ("Write-Progress -Activity 'TZ410_LAB' -Status 'SYNTHETIC' -PercentComplete 40\nWrite-Output 'TZ410_PROGRESS_DONE'", 0, ('TZ410_PROGRESS_DONE',)),
-    "RUSSIAN": ("Write-Output 'Проверка русского текста'\n[Console]::Error.WriteLine('TZ410_RU_STDERR')\nWrite-Output 'TZ410_RU_DONE'", 0, ('TZ410_RU_DONE',)),
+    "RUSSIAN_DEFAULT": ("Write-Output 'Проверка русского текста'\n[Console]::Error.WriteLine('TZ410_RU_STDERR')\nWrite-Output 'TZ410_RU_DONE'", 0, ('TZ410_RU_DONE',)),
+    "RUSSIAN": ("[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)\nWrite-Output 'Проверка русского текста'\n[Console]::Error.WriteLine('TZ410_RU_STDERR')\nWrite-Output 'TZ410_RU_DONE'", 0, ('TZ410_RU_DONE',)),
     "CHILD_CMD": ("& cmd.exe /d /c echo TZ410_CHILD_OK\nWrite-Output 'TZ410_PARENT_OK'", 0, ('TZ410_CHILD_OK','TZ410_PARENT_OK')),
     "REAL_ERROR": ("Write-Error 'TZ410_REAL_ERROR'\n[Console]::Error.WriteLine('TZ410_ERROR_STDERR')\nexit 23", 23, ()),
 }
@@ -124,7 +125,7 @@ def main():
             if not pass_now:errors.append(prefix)
             row={'case':name,'mode':mode,'exit_code':code,'expected_exit_code':expected,
                  'timeout':timed_out,'markers_present':all(m in txt for m in markers),
-                 'pass':pass_now,'russian_text_preserved':contains_russian(out) if name=='RUSSIAN' else None,
+                 'pass':pass_now,'russian_text_preserved':contains_russian(out) if name.startswith('RUSSIAN') else None,
                  'stdout':describe(out),'stderr':describe(err)}
             all_cases.append(row)
             print(prefix,'exit',code,'stdout_bytes',len(out),'stderr_bytes',len(err),

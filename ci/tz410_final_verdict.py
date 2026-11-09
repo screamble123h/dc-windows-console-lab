@@ -17,7 +17,7 @@ def verdict(control,channels,matrix,resources):
     matrix_rows=matrix.get('matrix') or []
     matrix_ok=(len(matrix_rows)>=3 and all(x.get('exit')==0 for x in matrix_rows))
     # matrix has 100 baseline and 100 patched, never silently count the old run.
-    clixml_ok=(channels.get('attempted')==15 and channels.get('passed')==15 and
+    clixml_ok=(channels.get('attempted')==18 and channels.get('passed')==18 and
                not channels.get('failure_ids'))
     ev = Path('evidence')
     baseline = parse(ev/'WINDOWS_LAB_BASELINE_100.json').get('manifest') or {}
@@ -61,7 +61,7 @@ def main():
                 parse(ev/'TZ410_RESOURCE_COMPARISON.json'))
     ev.mkdir(exist_ok=True)
     (ev/'TZ410_FINAL_VERDICT.json').write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\n',encoding='utf8')
-    print(json.dumps(out,ensure_ascii=False,indent=2))
+    print(json.dumps(out,ensure_ascii=True,indent=2))
     # Even a green suite may not certify installation; fail if positive control
     # was absent or if functional checks did not run.
     ok=(out['hosted_runner_control']['positive_detected']
