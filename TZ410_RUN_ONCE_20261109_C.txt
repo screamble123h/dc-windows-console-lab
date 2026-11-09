@@ -1,0 +1,1 @@
+One-shot third Windows 2022 hosted runner calibration after strict PID/HWND analysis correction. No production access.
