@@ -107,6 +107,7 @@ def main() -> int:
     notepad = None
     observer = None
     neg_exit = None
+    neg_pid = None
     notepad_in_foreground = False
     pos_pid = None
     notes = []
@@ -157,7 +158,7 @@ def main() -> int:
         try:
             start = subprocess.STARTUPINFO()
             start.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            start.wShowWindow = 1  # Win32 SW_SHOWNORMAL; subprocess has no such constant
+            start.wShowWindow = subprocess.SW_SHOWNORMAL
             child = subprocess.Popen(
                 ["cmd.exe", "/d", "/c", f"title {pos_marker} & ping -n 8 127.0.0.1 >NUL"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -197,14 +198,21 @@ def main() -> int:
         # Negative control: a real cmd.exe whose console window must remain
         # suppressed, while the diagnostic marker is still unique.
         try:
-            hidden = subprocess.run(
+            hidden = subprocess.Popen(
                 ["cmd.exe", "/d", "/c",
                  f"title {neg_marker} & ping -n 4 127.0.0.1 >NUL"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW,
-                timeout=15, check=False,
             )
-            neg_exit = hidden.returncode
+            neg_pid = hidden.pid
+            try:
+                hidden.communicate(timeout=15)
+                neg_exit = hidden.returncode
+            except subprocess.TimeoutExpired:
+                hidden.kill()
+                hidden.communicate()
+                neg_exit = 124
+                notes.append("NEGATIVE_TIMEOUT")
             time.sleep(0.9)
         except Exception as exc:
             notes.append("NEGATIVE_SPAWN_ERROR_" + type(exc).__name__)
@@ -231,7 +239,7 @@ def main() -> int:
 
     events = read_jsonl(log)
     result = analyze_controls(events, pos_marker, neg_marker, pos_pid, neg_exit,
-                              notepad_in_foreground)
+                              notepad_in_foreground, negative_spawned_pid=neg_pid)
     result.update({
         "test": "TZ410_VISIBLE_CONSOLE_CONTROL",
         "environment": "PUBLIC_GITHUB_HOSTED_WINDOWS_RUNNER_ONLY",

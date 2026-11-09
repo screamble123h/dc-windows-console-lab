@@ -33,8 +33,9 @@ def read_jsonl(path: Path) -> list[dict]:
     return events
 
 
-def console_event_match(event: dict, marker: str) -> bool:
-    if event.get("event") != "new_visible_console_window":
+def console_event_match(event: dict, marker: str, spawned_pid: int | None = None,
+                        event_type: str = "new_visible_console_window") -> bool:
+    if event.get("event") != event_type:
         return False
     window = event.get("window") or {}
     process = event.get("process") or {}
@@ -45,20 +46,23 @@ def console_event_match(event: dict, marker: str) -> bool:
     is_console = window.get("class") in CONSOLE_CLASSES or p_name in {
         "cmd.exe", "powershell.exe", "conhost.exe", "pwsh.exe", "openconsole.exe"
     }
-    return is_console and marker in title and int(window.get("hwnd") or 0) > 0 and int(window.get("pid") or 0) > 0
+    owner_pid = int(window.get("pid") or 0)
+    parent_pid = int(process.get("ppid") or 0)
+    pid_correlates = bool(spawned_pid and (owner_pid == spawned_pid or parent_pid == spawned_pid))
+    return bool(is_console and (marker in title or pid_correlates)
+                and int(window.get("hwnd") or 0) > 0 and owner_pid > 0)
 
 
 def analyze_controls(events: list[dict], pos_marker: str, neg_marker: str,
                      positive_spawned_pid: int | None, negative_exit: int | None,
-                     notepad_foreground_confirmed: bool) -> dict:
+                     notepad_foreground_confirmed: bool, negative_spawned_pid: int | None = None) -> dict:
     started = any(e.get("event") == "observer_start" for e in events)
     finished = any(e.get("event") == "observer_done" for e in events)
     exceptions = [e for e in events if e.get("event") in ("observer_error", "unparseable_observer_line")]
-    positive = [e for e in events if console_event_match(e, pos_marker)]
-    negative = [e for e in events if console_event_match(e, neg_marker)]
-    focus_positive = [e for e in events
-                      if e.get("event") == "console_foreground_transition"
-                      and pos_marker in str((e.get("window") or {}).get("title", ""))]
+    positive = [e for e in events if console_event_match(e, pos_marker, positive_spawned_pid)]
+    negative = [e for e in events if console_event_match(e, neg_marker, negative_spawned_pid)]
+    focus_positive = [e for e in events if console_event_match(
+        e, pos_marker, positive_spawned_pid, event_type="console_foreground_transition")]
     p = positive[0] if positive else None
     w = p.get("window", {}) if p else {}
     process = p.get("process", {}) if p else {}
@@ -75,7 +79,7 @@ def analyze_controls(events: list[dict], pos_marker: str, neg_marker: str,
         "observer_finished": finished,
         "observer_errors": exceptions,
         "positive": {
-            "status": "PASS" if valid_events and positive and title_correlates else "NOT_DETECTED",
+            "status": "PASS" if valid_events and positive and (title_correlates or direct_pid_match or child_pid_match) else "NOT_DETECTED",
             "spawned_pid": positive_spawned_pid,
             "detected": bool(positive),
             "timestamp_utc": p.get("time_utc") if p else None,

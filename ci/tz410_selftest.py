@@ -10,11 +10,29 @@ common=[{'event':'observer_start'}, {'event':'observer_done'}]
 win={'event':'new_visible_console_window','time_utc':'2026-11-09T00:00:00Z',
      'window':{'hwnd':1000,'pid':2000,'class':'ConsoleWindowClass','title':P},
      'process':{'pid':2000,'ppid':123,'name':'conhost.exe'}}
-focus={'event':'console_foreground_transition','window':{'title':P}}
+focus={**win,'event':'console_foreground_transition'}
 r=analyze_controls([common[0],win,focus,common[1]],P,N,123,0,True)
 assert r['positive']['status']=='PASS' and r['negative']['status']=='PASS'
 assert r['focus']['status']=='PASS' and r['calibrated_for_zero_window_claim']
 print('PASS positive window / focus / negative hidden synthetic fixture')
+# A real GitHub runner can log the initial cmd.exe title before title.exe updates it.
+# Exact PID and ConsoleWindowClass must be sufficient; do not require title nonce.
+real_window = {'event':'new_visible_console_window',
+               'window':{'hwnd':786902,'pid':8104,'class':'ConsoleWindowClass',
+                         'title':r'C:\Windows\SYSTEM32\cmd.exe'},
+               'process':{'pid':8104,'ppid':4324,'name':'cmd.exe'}}
+real_focus = {**real_window, 'event':'console_foreground_transition'}
+r=analyze_controls([common[0],real_window,real_focus,common[1]],P,N,8104,0,True)
+assert r['positive']['status']=='PASS' and r['positive']['direct_pid_match']
+assert not r['positive']['window_title_nonce_matched'] and r['focus']['status']=='PASS'
+print('PASS PID-correlated cmd console / foreground without title nonce')
+negative_window = {**real_window, 'window':{**real_window['window'],'pid':9999},
+                   'process':{'pid':9999,'ppid':123,'name':'cmd.exe'}}
+r=analyze_controls([common[0],real_window,negative_window,common[1]],P,N,8104,0,True,
+                   negative_spawned_pid=9999)
+assert r['negative']['status']=='FAIL_OR_INCONCLUSIVE'
+print('PASS hidden negative control caught by PID despite absent title')
+
 r=analyze_controls(common,P,N,123,0,True)
 assert r['positive']['status']=='NOT_DETECTED' and not r['calibrated_for_zero_window_claim']
 print('PASS missing positive blocks calibration')
