@@ -1,0 +1,1 @@
+One-time public GitHub-hosted Windows 2022 calibration rerun after lab-only fixes. No production access. 2026-11-09.
