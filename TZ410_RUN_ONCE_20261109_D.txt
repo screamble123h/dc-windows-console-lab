@@ -1,0 +1,1 @@
+2026-11-09 one-time hosted Windows 2022 GUI observer calibration. Corrected PID/HWND analyzer and numeric SW_SHOWNORMAL. No production access.
