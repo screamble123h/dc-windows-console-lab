@@ -57,6 +57,6 @@ res=examine({'window_station_desktops_enumerated':True,'broker_desktop_names':[]
 assert res['status']=='INCONCLUSIVE_OR_LEAK_CANDIDATE'
 print('PASS hidden desktop leak candidate blocks claim')
 v=verdict({'positive':{'status':'PASS'},'negative':{'status':'PASS'},'focus':{'status':'PASS'},'calibrated_for_zero_window_claim':True},
-          {'attempted':15,'passed':15}, {'matrix':[{'test':'functional','exit':0},{'test':'tool_api','exit':0},{'test':'clixml','exit':0}]},res)
+          {'attempted':18,'passed':18}, {'matrix':[{'test':'functional','exit':0},{'test':'tool_api','exit':0},{'test':'clixml','exit':0}]},res)
 assert v['ready_to_deploy'] is False and v['verdict']=='НЕ ГОТОВ К ВНЕДРЕНИЮ'
 print('PASS green CI cannot imply deployment approval')
