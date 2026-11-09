@@ -2,6 +2,11 @@ name: Desktop Commander TZ4.10 - calibrated Windows evidence (NO DEPLOYMENT)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - experiment/tz4-11-windows-lab
+    paths:
+      - TZ410_RUN_ONCE_20261109_D.txt
 
 permissions:
   contents: read
