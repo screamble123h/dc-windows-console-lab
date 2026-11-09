@@ -1,4 +1,4 @@
-name: DC v4.6 - Windows hosted functional evidence (NO deployment)
+name: DC TZ4.10 - calibrated Windows controls (BRANCH ONLY; NO DEPLOYMENT)
 
 on:
   workflow_dispatch:
@@ -37,6 +37,32 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Import exact TZ4.10 overlay from SHA256-verified branch archive
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import hashlib, zipfile, sys
+          p=Path('FotoMag_TZ4_10_GitHub_Calibrated_Windows_Overlay.zip')
+          expected='2df288eaf8d9266bcb30f781bede026d4231edcdaa52e16e36ff92b9ab1898c0'
+          if not p.is_file(): sys.exit('TZ410_OVERLAY_ARCHIVE_MISSING__UPLOAD_TO_EXPERIMENT_BRANCH_ONLY')
+          if hashlib.sha256(p.read_bytes()).hexdigest()!=expected: sys.exit('TZ410_ARCHIVE_HASH_MISMATCH')
+          with zipfile.ZipFile(p) as z:
+              names=z.namelist()
+              if len(names)!=22 or len(set(names))!=22: sys.exit('TZ410_BAD_FILE_COUNT_OR_DUPLICATE')
+              for n in names:
+                  q=Path(n)
+                  if q.is_absolute() or '..' in q.parts or '\\' in n: sys.exit('TZ410_UNSAFE_PATH')
+                  if n.startswith('lab/') or n in ('.github/workflows/windows-v4_6-ci.yml',): sys.exit('TZ410_UNEXPECTED_REPLACEMENT')
+              z.extractall('.')
+          print('TZ410_EXACT_ARCHIVE_HASH_OK; 22 overlay files expanded in isolated runner')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'TZ410_IMPORT_FAILED' }
+      - name: Run calibrated observer and CLIXML offline selftests
+        shell: pwsh
+        run: |
+          python ci/tz410_selftest.py
+          if ($LASTEXITCODE -ne 0) { throw 'TZ410_SELFTEST_FAILED' }
       - name: Scan staged public source for internal identifiers
         shell: pwsh
         run: python ci/check_public_safety.py
@@ -87,11 +113,41 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'PLANNER_UNIT_TEST_FAILED' }
           python ci/probe_windows_session.py
           if ($LASTEXITCODE -ne 0) { throw 'GUI_PROBE_FAILED' }
+      - name: Positive visible console and negative hidden console controls
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          python ci/tz410_control_runner.py
+          if ($LASTEXITCODE -ne 0) { throw 'TZ410_CONTROLS_FAILED' }
+      - name: Desktop and process snapshot before matrix
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          python ci/tz410_win_resources.py --output evidence/TZ410_RESOURCES_BEFORE.json
       - name: Perform 100 original and 100 patched Windows functional trials
         shell: pwsh
         run: |
           python ci/run_functional_windows.py
           if ($LASTEXITCODE -ne 0) { throw 'FUNCTIONAL_MATRIX_FAILED_READ_ARTIFACT' }
+      - name: New TZ4.10 100x2 functional matrix and HWND observation
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          python ci/tz49_run_matrix.py
+          if ($LASTEXITCODE -ne 0) { throw 'TZ410_MATRIX_FAILED' }
+      - name: Preserve raw CLIXML stdout and stderr separately
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          python ci/tz410_clixml_channels.py
+          if ($LASTEXITCODE -ne 0) { throw 'TZ410_CLIXML_FAILED' }
+      - name: Desktop and process snapshot after matrix
+        shell: pwsh
+        if: always()
+        continue-on-error: true
+        run: |
+          python ci/tz410_win_resources.py --output evidence/TZ410_RESOURCES_AFTER.json
+          python ci/tz410_resource_audit.py evidence/TZ410_RESOURCES_BEFORE.json evidence/TZ410_RESOURCES_AFTER.json evidence/TZ410_RESOURCE_COMPARISON.json
       - name: Smoke real Desktop Commander startProcess tool API (original and patch)
         shell: pwsh
         run: |
@@ -101,11 +157,17 @@ jobs:
         if: always()
         shell: pwsh
         run: python ci/final_verdict.py
+      - name: TZ4.10 strict verdict — never grants production deployment
+        shell: pwsh
+        if: always()
+        run: |
+          python ci/tz410_final_verdict.py
+          if ($LASTEXITCODE -ne 0) { throw 'TZ410_INCOMPLETE_EVIDENCE_OR_FAILED_CONTROLS' }
       - name: Upload bounded Windows trial evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dc-v4-6-windows-functional-evidence
+          name: dc-tz410-calibrated-windows-evidence
           path: evidence/
-          retention-days: 1
+          retention-days: 30
           if-no-files-found: warn
