@@ -1,0 +1,81 @@
+{
+  "source": "Verified original public GitHub Actions evidence archives",
+  "runs": [
+    {
+      "workflow_run_id": 42498424953,
+      "commit": "9fdcbeddb420d61f3be347a41d97b98b3db35439",
+      "url": "https://github.com/screamble123h/dc-windows-console-lab/actions/runs/42498424953",
+      "baseline": {
+        "attempted": 100,
+        "passed": 100,
+        "stderr_clixml_cases": 0,
+        "stdout_clixml_cases": 0
+      },
+      "patched": {
+        "attempted": 100,
+        "passed": 100,
+        "stderr_clixml_cases": 40,
+        "stdout_clixml_cases": 0
+      },
+      "gui_positive_control_performed": false,
+      "remote_mcp_reconnection_performed": false,
+      "gui_runner_observation": null
+    },
+    {
+      "workflow_run_id": 42499070787,
+      "commit": "0f6c096c62956134bd9cbb4728ea915c5e14cfb5",
+      "url": "https://github.com/screamble123h/dc-windows-console-lab/actions/runs/42499070787",
+      "baseline": {
+        "attempted": 100,
+        "passed": 100,
+        "stderr_clixml_cases": 0,
+        "stdout_clixml_cases": 0
+      },
+      "patched": {
+        "attempted": 100,
+        "passed": 100,
+        "stderr_clixml_cases": 40,
+        "stdout_clixml_cases": 0
+      },
+      "gui_positive_control_performed": false,
+      "remote_mcp_reconnection_performed": false,
+      "gui_runner_observation": [
+        {
+          "observer_exit": 0,
+          "started": true,
+          "finished": true,
+          "ticks": 646,
+          "seconds": 65.02,
+          "new_visible_console_events": 0,
+          "console_focus_events": 0,
+          "baseline_windows": 1,
+          "starting_foreground_hwnd_present": true,
+          "observer_error": null,
+          "measures_hosted_runner_only": true,
+          "human_visible_desktop_proven": false,
+          "mode": "baseline",
+          "trial_seconds": 30.69
+        },
+        {
+          "observer_exit": 0,
+          "started": true,
+          "finished": true,
+          "ticks": 647,
+          "seconds": 65.08,
+          "new_visible_console_events": 0,
+          "console_focus_events": 0,
+          "baseline_windows": 1,
+          "starting_foreground_hwnd_present": true,
+          "observer_error": null,
+          "measures_hosted_runner_only": true,
+          "human_visible_desktop_proven": false,
+          "mode": "broker",
+          "trial_seconds": 25.33
+        }
+      ]
+    }
+  ],
+  "conclusion": "CLIXML is present in patched stderr 40/100 each and baseline 0/100; the old window observer lacked a positive control. Neither run established an interactive user GUI fix.",
+  "new_tz410_windows_runs": 0,
+  "production_pc_touched": false
+}

@@ -1,0 +1,18 @@
+{
+  "date": "2026-11-09",
+  "task": "FotoMag TZ4.10",
+  "test_machine": "isolated Linux",
+  "actual_new_windows_runs": 0,
+  "github_app_selected_repositories_count": 8,
+  "test_repository_in_installation": false,
+  "branch_created": false,
+  "branch_creation_error_prior_run": "403 Resource not accessible by integration",
+  "runtime_edit_on_production": false,
+  "python_syntax_check": "PASS",
+  "pure_synthetic_control_tests": "9/9 PASS",
+  "public_scan": "PASS",
+  "privacy_note": "CI overlay excludes original production hostname/private paths",
+  "new_workflow_manual_only": true,
+  "artifact_retention_days_requested": 30,
+  "deployment_status": "NOT READY FOR DEPLOYMENT"
+}

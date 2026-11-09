@@ -1,4 +1,4 @@
-name: DC TZ4.10 - calibrated Windows controls (BRANCH ONLY; NO DEPLOYMENT)
+name: Desktop Commander TZ4.10 - calibrated Windows evidence (NO DEPLOYMENT)
 
 on:
   workflow_dispatch:
@@ -7,21 +7,20 @@ permissions:
   contents: read
 
 concurrency:
-  group: dc-v4-6-windows-ci
+  group: dc-tz410-windows-calibrated
   cancel-in-progress: false
 
 jobs:
-  windows-functional:
-    # Never start paid private-repository jobs. Public GitHub-hosted STANDARD runner only.
+  windows-evidence:
     if: ${{ github.event.repository.private == false && github.event.repository.visibility == 'public' }}
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       FOTOMAG_ISOLATED_WINDOWS_LAB: 'YES'
       FOTOMAG_VM_EVIDENCE_SAFE: 'YES'
       CI: 'true'
     steps:
-      - name: Checkout SANITIZED PUBLIC LAB ONLY
+      - name: Checkout isolated public lab without reusable credentials
         uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -37,135 +36,104 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Import exact TZ4.10 overlay from SHA256-verified branch archive
+      - name: Verify truly standard free hosted Windows runner and public content
         shell: pwsh
         run: |
-          @'
-          from pathlib import Path
-          import hashlib, zipfile, sys
-          p=Path('FotoMag_TZ4_10_GitHub_Calibrated_Windows_Overlay.zip')
-          expected='2df288eaf8d9266bcb30f781bede026d4231edcdaa52e16e36ff92b9ab1898c0'
-          if not p.is_file(): sys.exit('TZ410_OVERLAY_ARCHIVE_MISSING__UPLOAD_TO_EXPERIMENT_BRANCH_ONLY')
-          if hashlib.sha256(p.read_bytes()).hexdigest()!=expected: sys.exit('TZ410_ARCHIVE_HASH_MISMATCH')
-          with zipfile.ZipFile(p) as z:
-              names=z.namelist()
-              if len(names)!=22 or len(set(names))!=22: sys.exit('TZ410_BAD_FILE_COUNT_OR_DUPLICATE')
-              for n in names:
-                  q=Path(n)
-                  if q.is_absolute() or '..' in q.parts or '\\' in n: sys.exit('TZ410_UNSAFE_PATH')
-                  if n.startswith('lab/') or n in ('.github/workflows/windows-v4_6-ci.yml',): sys.exit('TZ410_UNEXPECTED_REPLACEMENT')
-              z.extractall('.')
-          print('TZ410_EXACT_ARCHIVE_HASH_OK; 22 overlay files expanded in isolated runner')
-          '@ | python -
-          if ($LASTEXITCODE -ne 0) { throw 'TZ410_IMPORT_FAILED' }
-      - name: Run calibrated observer and CLIXML offline selftests
-        shell: pwsh
-        run: |
+          if ('${{ github.event.repository.visibility }}' -ne 'public' -or
+              $env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or
+              $env:GITHUB_REPOSITORY -ne 'screamble123h/dc-windows-console-lab') {
+            throw 'STRICT_PUBLIC_STANDARD_WINDOWS_ONLY'
+          }
+          python ci/check_public_safety.py
+          if ($LASTEXITCODE -ne 0) { throw 'NOT_PUBLIC_SAFE' }
           python ci/tz410_selftest.py
-          if ($LASTEXITCODE -ne 0) { throw 'TZ410_SELFTEST_FAILED' }
-      - name: Scan staged public source for internal identifiers
-        shell: pwsh
-        run: python ci/check_public_safety.py
-      - name: Verify public-standard-hosted guard; clone exact upstream v0.3.1
+          if ($LASTEXITCODE -ne 0) { throw 'CONTROL_SELFTEST_FAILED' }
+      - name: Build original 0.3.1 and patched 4.6 in isolated checkouts
         shell: pwsh
         run: |
-          if ('${{ github.event.repository.visibility }}' -ne 'public' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows') { throw 'PUBLIC_STANDARD_WINDOWS_RUNNER_ONLY' }
           git clone --depth 1 --branch v0.3.1 https://github.com/wonderwhy-er/DesktopCommanderMCP.git upstream-baseline
-          if ($LASTEXITCODE -ne 0) { throw 'BASELINE_CLONE_FAILED' }
+          if ($LASTEXITCODE -ne 0) { throw 'UPSTREAM_BASE_CLONE_FAILED' }
           git clone --depth 1 --branch v0.3.1 https://github.com/wonderwhy-er/DesktopCommanderMCP.git upstream-patched
-          if ($LASTEXITCODE -ne 0) { throw 'PATCHED_CLONE_FAILED' }
-          $blob = (& git -C upstream-baseline hash-object src/utils/shell.ts).Trim()
-          if ($blob -ne '3d9c46e4a440afd8062cebf70864452bc1156d39') { throw "UPSTREAM_SOURCE_MISMATCH: $blob" }
-          $patch = (Join-Path $env:GITHUB_WORKSPACE 'lab/SOURCE_PATCH_v0.3.1_PUBLIC_CI.patch')
+          if ($LASTEXITCODE -ne 0) { throw 'UPSTREAM_PATCH_CLONE_FAILED' }
+          $sha = (& git -C upstream-baseline hash-object src/utils/shell.ts).Trim()
+          if ($sha -ne '3d9c46e4a440afd8062cebf70864452bc1156d39') { throw 'ORIGINAL_HASH_MISMATCH' }
+          $patch = Join-Path $env:GITHUB_WORKSPACE 'lab/SOURCE_PATCH_v0.3.1_PUBLIC_CI.patch'
           git -C upstream-patched apply --check $patch
-          if ($LASTEXITCODE -ne 0) { throw 'PATCH_APPLY_CHECK_FAILED' }
+          if ($LASTEXITCODE -ne 0) { throw 'PATCH_CHECK_FAILED' }
           git -C upstream-patched apply $patch
           if ($LASTEXITCODE -ne 0) { throw 'PATCH_APPLY_FAILED' }
-          $first = (Get-FileHash -Algorithm SHA256 upstream-patched/native/windows-headless-broker/main_windows.go).Hash
-          $second = (Get-FileHash -Algorithm SHA256 lab/native/windows-headless-broker/main_windows.go).Hash
-          if ($first -ne $second) { throw 'SANITIZED_GO_PATCH_MISMATCH' }
-      - name: Build baseline, patched upstream and Go broker
-        shell: pwsh
-        run: |
           Push-Location upstream-baseline
           npm ci --ignore-scripts --no-audit --no-fund
-          if ($LASTEXITCODE -ne 0) { throw 'BASELINE_NPM_CI_FAILED' }
+          if ($LASTEXITCODE -ne 0) { throw 'BASE_DEPS_FAILED' }
           npm run build
-          if ($LASTEXITCODE -ne 0) { throw 'BASELINE_BUILD_FAILED' }
+          if ($LASTEXITCODE -ne 0) { throw 'BASE_BUILD_FAILED' }
           Pop-Location
           Push-Location upstream-patched
           npm ci --ignore-scripts --no-audit --no-fund
-          if ($LASTEXITCODE -ne 0) { throw 'PATCHED_NPM_CI_FAILED' }
+          if ($LASTEXITCODE -ne 0) { throw 'PATCH_DEPS_FAILED' }
           npm run build
-          if ($LASTEXITCODE -ne 0) { throw 'PATCHED_BUILD_FAILED' }
+          if ($LASTEXITCODE -ne 0) { throw 'PATCH_BUILD_FAILED' }
           Pop-Location
           New-Item -ItemType Directory -Force lab/baseline/dist/utils,lab/dist/utils,evidence | Out-Null
           Copy-Item -Force upstream-baseline/dist/utils/shell.js lab/baseline/dist/utils/shell.js
           Copy-Item -Force upstream-patched/dist/utils/shell.js lab/dist/utils/shell.js
           Copy-Item -Force upstream-patched/dist/utils/windows-direct-spawn.js lab/dist/utils/windows-direct-spawn.js
           Copy-Item -Force upstream-patched/dist/utils/windows-headless-broker.js lab/dist/utils/windows-headless-broker.js
+          if ((Get-FileHash -Algorithm SHA256 upstream-patched/native/windows-headless-broker/main_windows.go).Hash -ne
+              (Get-FileHash -Algorithm SHA256 lab/native/windows-headless-broker/main_windows.go).Hash) {
+             throw 'PATCHED_BROKER_SOURCE_DIFFERENT_FROM_PUBLIC_LAB'
+          }
           go build -trimpath -o lab/native/windows-headless-broker/fotomag-headless-broker-win64.exe lab/native/windows-headless-broker/main_windows.go
-          if ($LASTEXITCODE -ne 0) { throw 'GO_BROKER_BUILD_FAILED' }
-      - name: Run adapted planner unit tests and describe GUI session
+          if ($LASTEXITCODE -ne 0) { throw 'BROKER_BUILD_FAILED' }
+      - name: Existing planner regressions + isolated session descriptor
         shell: pwsh
         run: |
           node --test lab/test/windows-direct-spawn-planner.test.mjs lab/test/windows-headless-broker-planner.test.mjs lab/test/node-stdio-isolation.test.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'PLANNER_UNIT_TEST_FAILED' }
+          if ($LASTEXITCODE -ne 0) { throw 'PLANNER_REGRESSION' }
           python ci/probe_windows_session.py
-          if ($LASTEXITCODE -ne 0) { throw 'GUI_PROBE_FAILED' }
+          if ($LASTEXITCODE -ne 0) { throw 'SESSION_PROBE_ERROR' }
       - name: Positive visible console and negative hidden console controls
         shell: pwsh
         continue-on-error: true
         run: |
           python ci/tz410_control_runner.py
-          if ($LASTEXITCODE -ne 0) { throw 'TZ410_CONTROLS_FAILED' }
-      - name: Desktop and process snapshot before matrix
+          if ($LASTEXITCODE -ne 0) { throw 'CONTROL_EXECUTION_ERROR' }
+      - name: Win32 desktop and candidate-process snapshot before main tests
         shell: pwsh
         continue-on-error: true
         run: |
           python ci/tz410_win_resources.py --output evidence/TZ410_RESOURCES_BEFORE.json
-      - name: Perform 100 original and 100 patched Windows functional trials
-        shell: pwsh
-        run: |
-          python ci/run_functional_windows.py
-          if ($LASTEXITCODE -ne 0) { throw 'FUNCTIONAL_MATRIX_FAILED_READ_ARTIFACT' }
-      - name: New TZ4.10 100x2 functional matrix and HWND observation
+          if ($LASTEXITCODE -ne 0) { throw 'RESOURCE_BEFORE_ERROR' }
+      - name: 100 baseline and 100 patched functional tests, tool API, window observation
         shell: pwsh
         continue-on-error: true
         run: |
           python ci/tz49_run_matrix.py
-          if ($LASTEXITCODE -ne 0) { throw 'TZ410_MATRIX_FAILED' }
-      - name: Preserve raw CLIXML stdout and stderr separately
+          if ($LASTEXITCODE -ne 0) { throw 'FUNCTIONAL_MATRIX_ERROR' }
+      - name: Preserve separate unmodified stdout/stderr and diagnose CLIXML
         shell: pwsh
         continue-on-error: true
         run: |
           python ci/tz410_clixml_channels.py
-          if ($LASTEXITCODE -ne 0) { throw 'TZ410_CLIXML_FAILED' }
-      - name: Desktop and process snapshot after matrix
+          if ($LASTEXITCODE -ne 0) { throw 'CHANNEL_TESTS_FAILED' }
+      - name: Win32 desktop and candidate-process snapshot after main tests
         shell: pwsh
         if: always()
         continue-on-error: true
         run: |
           python ci/tz410_win_resources.py --output evidence/TZ410_RESOURCES_AFTER.json
+          if ($LASTEXITCODE -ne 0) { throw 'RESOURCE_AFTER_ERROR' }
           python ci/tz410_resource_audit.py evidence/TZ410_RESOURCES_BEFORE.json evidence/TZ410_RESOURCES_AFTER.json evidence/TZ410_RESOURCE_COMPARISON.json
-      - name: Smoke real Desktop Commander startProcess tool API (original and patch)
-        shell: pwsh
-        run: |
-          python ci/run_tool_smoke.py
-          if ($LASTEXITCODE -ne 0) { throw 'REAL_TOOL_API_SMOKE_FAILED_READ_ARTIFACT' }
-      - name: Strict final verdict (never claims GUI or Remote MCP proof)
-        if: always()
-        shell: pwsh
-        run: python ci/final_verdict.py
-      - name: TZ4.10 strict verdict — never grants production deployment
+          if ($LASTEXITCODE -ne 0) { throw 'RESOURCE_AUDIT_ERROR' }
+      - name: Strict verdict — fail when controls cannot validate the observer
         shell: pwsh
         if: always()
         run: |
           python ci/tz410_final_verdict.py
-          if ($LASTEXITCODE -ne 0) { throw 'TZ410_INCOMPLETE_EVIDENCE_OR_FAILED_CONTROLS' }
-      - name: Upload bounded Windows trial evidence
-        if: always()
+          if ($LASTEXITCODE -ne 0) { throw 'TZ410_EVIDENCE_INCOMPLETE_OR_CONTROLS_FAILED' }
+      - name: Upload evidence for 30 days if repository retention allows
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: dc-tz410-calibrated-windows-evidence
           path: evidence/

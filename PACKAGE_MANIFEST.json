@@ -1,0 +1,116 @@
+{
+  "task": "FotoMag TZ4.10",
+  "commit_created": false,
+  "run_executed": false,
+  "target_repo": "screamble123h/dc-windows-console-lab",
+  "installation_id": 166887834,
+  "workflow_path": ".github/workflows/windows-v4_10-ci.yml",
+  "manual_dispatch_only": true,
+  "base_revision_expected": "0f6c096c62956134bd9cbb4728ea915c5e14cfb5",
+  "new_patch_code_modified": false,
+  "provenance": "TZ4.9 overlay and v4.6 public GitHub lab; code-only test additions",
+  "ready_to_deploy": false,
+  "file_count_excluding_manifests": 20,
+  "files": [
+    {
+      "path": ".github/workflows/windows-v4_10-ci.yml",
+      "size": 6902,
+      "sha256": "9872d01dc5cfd4812116a4d048823c9157711c8ebd0b0b06543df05359d2c8e8"
+    },
+    {
+      "path": "GITHUB_ACCESS_ONE_ACTION.md",
+      "size": 1136,
+      "sha256": "ecd82ca12cc6ab46b2f5fe1286a6c6d87349a7390e086b5a8f79406fac3e0176"
+    },
+    {
+      "path": "LOCAL_VALIDATION_TZ410.json",
+      "size": 681,
+      "sha256": "670b921131587ba89298c4b6897aaba88b39eea0879e7a37f69eaf2340116186"
+    },
+    {
+      "path": "README_TZ4_10_PUBLIC.md",
+      "size": 4082,
+      "sha256": "85f7f1537d3102ad5f9f516de1b466bdd77549b69c64096436773d7aafa9a3e6"
+    },
+    {
+      "path": "SECURITY_AND_LIMITS.md",
+      "size": 1344,
+      "sha256": "04b187c0c758f03a3fb2fb759fc95fc17e83eb49b1f21f8795c7e7ab44b6f12d"
+    },
+    {
+      "path": "TZ4_10_EXISTING_EVIDENCE_AUDIT.json",
+      "size": 2646,
+      "sha256": "ba8cf42384239cc7fa8924eeb6a50a508058421bc4e803b3ca7dd50b4fe31992"
+    },
+    {
+      "path": "ci/check_public_safety.py",
+      "size": 1293,
+      "sha256": "8a533f2e8d37d36397fcb5e65873154e11c10cf28d757032df18fc67646dee9b"
+    },
+    {
+      "path": "ci/tz410_clixml_channels.py",
+      "size": 7117,
+      "sha256": "9f85551dc0c496227de778665f5d9ac53689daa48bcd9091848c7173ed92f92d"
+    },
+    {
+      "path": "ci/tz410_control_analysis.py",
+      "size": 4975,
+      "sha256": "86aee58d49d4791e9df6033fc29fca8e241b2eb19e767e76816d3c3076753711"
+    },
+    {
+      "path": "ci/tz410_control_runner.py",
+      "size": 10016,
+      "sha256": "1fa96eab657dd6c2ba3573b9db10d03b7a59ec6538d9f384797d99e36d26aee0"
+    },
+    {
+      "path": "ci/tz410_final_verdict.py",
+      "size": 3814,
+      "sha256": "cead268e3dfc65ede16073d684573eccd16dd031b4a1df4d9cf4912a19308621"
+    },
+    {
+      "path": "ci/tz410_resource_audit.py",
+      "size": 1528,
+      "sha256": "7fba70dd8663440280517a26ea4b36c5d9b81724f8b835bf6068135fd9ad6d6d"
+    },
+    {
+      "path": "ci/tz410_selftest.py",
+      "size": 2990,
+      "sha256": "927707443ba8337d1a9195b127be13d3b4956f2ac4c1f61388325147264508dd"
+    },
+    {
+      "path": "ci/tz410_win_resources.py",
+      "size": 2187,
+      "sha256": "b0cbfe8a7a0e11a1540b6f4cc1937b8da50a431ae7159a0ec6daec10dfc24a6f"
+    },
+    {
+      "path": "ci/tz49_clixml_probe.py",
+      "size": 6584,
+      "sha256": "d5e4dc031197dbf8e54b8d0d65ec011f460ad75b21b6a38d955250a5b885fcc5"
+    },
+    {
+      "path": "ci/tz49_clixml_selftest.py",
+      "size": 880,
+      "sha256": "b6dec72169558f754539d71628ffc852f50893e7e4f49e04099fb2e3dd9e2976"
+    },
+    {
+      "path": "ci/tz49_gui_observer.py",
+      "size": 6281,
+      "sha256": "e5e8f4e07efda864aff1ef2cbbc4cf668319b8e9992b0c9e3d8365fb0bf4ec27"
+    },
+    {
+      "path": "ci/tz49_offline_evidence_audit.py",
+      "size": 2544,
+      "sha256": "9792ec24b267ade8791fb88db3379fec1d232f9b823d6df34a8dba84ebf5f5bd"
+    },
+    {
+      "path": "ci/tz49_process_probe.py",
+      "size": 2304,
+      "sha256": "2fd24357a02d1462a4f9cd4d39c125df5db893b6be2799580adf83e572a161ad"
+    },
+    {
+      "path": "ci/tz49_run_matrix.py",
+      "size": 4081,
+      "sha256": "861f9fcd308b36e30e2fecf91c6ff39d754554a2850dea747ca734454ac81539"
+    }
+  ]
+}

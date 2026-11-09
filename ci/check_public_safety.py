@@ -9,7 +9,7 @@ import sys
 
 root=Path(__file__).resolve().parent.parent
 patterns={
-    'private windows hostname':r'DESKTOP-[A-Z0-9]{8}',
+    'private windows hostname':r'DESKTOP-[A-Z0-9]{7,16}\b',
     'local Windows data path':r'(?i)[A-Z]:\\(?:Users\\|FotoMag_|FM_AI_OS|2026\\)',
     'emails':r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}',
     'possible secret assignment':r'(?i)(?:api[_-]?key|password|client_secret|access_token)\s*[:=]\s*["\']?[A-Za-z0-9/_+-]{10,}',

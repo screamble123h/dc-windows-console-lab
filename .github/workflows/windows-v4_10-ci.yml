@@ -1,0 +1,141 @@
+name: Desktop Commander TZ4.10 - calibrated Windows evidence (NO DEPLOYMENT)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dc-tz410-windows-calibrated
+  cancel-in-progress: false
+
+jobs:
+  windows-evidence:
+    if: ${{ github.event.repository.private == false && github.event.repository.visibility == 'public' }}
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      FOTOMAG_ISOLATED_WINDOWS_LAB: 'YES'
+      FOTOMAG_VM_EVIDENCE_SAFE: 'YES'
+      CI: 'true'
+    steps:
+      - name: Checkout isolated public lab without reusable credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Use Go 1.24
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Use Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify truly standard free hosted Windows runner and public content
+        shell: pwsh
+        run: |
+          if ('${{ github.event.repository.visibility }}' -ne 'public' -or
+              $env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or
+              $env:GITHUB_REPOSITORY -ne 'screamble123h/dc-windows-console-lab') {
+            throw 'STRICT_PUBLIC_STANDARD_WINDOWS_ONLY'
+          }
+          python ci/check_public_safety.py
+          if ($LASTEXITCODE -ne 0) { throw 'NOT_PUBLIC_SAFE' }
+          python ci/tz410_selftest.py
+          if ($LASTEXITCODE -ne 0) { throw 'CONTROL_SELFTEST_FAILED' }
+      - name: Build original 0.3.1 and patched 4.6 in isolated checkouts
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch v0.3.1 https://github.com/wonderwhy-er/DesktopCommanderMCP.git upstream-baseline
+          if ($LASTEXITCODE -ne 0) { throw 'UPSTREAM_BASE_CLONE_FAILED' }
+          git clone --depth 1 --branch v0.3.1 https://github.com/wonderwhy-er/DesktopCommanderMCP.git upstream-patched
+          if ($LASTEXITCODE -ne 0) { throw 'UPSTREAM_PATCH_CLONE_FAILED' }
+          $sha = (& git -C upstream-baseline hash-object src/utils/shell.ts).Trim()
+          if ($sha -ne '3d9c46e4a440afd8062cebf70864452bc1156d39') { throw 'ORIGINAL_HASH_MISMATCH' }
+          $patch = Join-Path $env:GITHUB_WORKSPACE 'lab/SOURCE_PATCH_v0.3.1_PUBLIC_CI.patch'
+          git -C upstream-patched apply --check $patch
+          if ($LASTEXITCODE -ne 0) { throw 'PATCH_CHECK_FAILED' }
+          git -C upstream-patched apply $patch
+          if ($LASTEXITCODE -ne 0) { throw 'PATCH_APPLY_FAILED' }
+          Push-Location upstream-baseline
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'BASE_DEPS_FAILED' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'BASE_BUILD_FAILED' }
+          Pop-Location
+          Push-Location upstream-patched
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'PATCH_DEPS_FAILED' }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'PATCH_BUILD_FAILED' }
+          Pop-Location
+          New-Item -ItemType Directory -Force lab/baseline/dist/utils,lab/dist/utils,evidence | Out-Null
+          Copy-Item -Force upstream-baseline/dist/utils/shell.js lab/baseline/dist/utils/shell.js
+          Copy-Item -Force upstream-patched/dist/utils/shell.js lab/dist/utils/shell.js
+          Copy-Item -Force upstream-patched/dist/utils/windows-direct-spawn.js lab/dist/utils/windows-direct-spawn.js
+          Copy-Item -Force upstream-patched/dist/utils/windows-headless-broker.js lab/dist/utils/windows-headless-broker.js
+          if ((Get-FileHash -Algorithm SHA256 upstream-patched/native/windows-headless-broker/main_windows.go).Hash -ne
+              (Get-FileHash -Algorithm SHA256 lab/native/windows-headless-broker/main_windows.go).Hash) {
+             throw 'PATCHED_BROKER_SOURCE_DIFFERENT_FROM_PUBLIC_LAB'
+          }
+          go build -trimpath -o lab/native/windows-headless-broker/fotomag-headless-broker-win64.exe lab/native/windows-headless-broker/main_windows.go
+          if ($LASTEXITCODE -ne 0) { throw 'BROKER_BUILD_FAILED' }
+      - name: Existing planner regressions + isolated session descriptor
+        shell: pwsh
+        run: |
+          node --test lab/test/windows-direct-spawn-planner.test.mjs lab/test/windows-headless-broker-planner.test.mjs lab/test/node-stdio-isolation.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'PLANNER_REGRESSION' }
+          python ci/probe_windows_session.py
+          if ($LASTEXITCODE -ne 0) { throw 'SESSION_PROBE_ERROR' }
+      - name: Positive visible console and negative hidden console controls
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          python ci/tz410_control_runner.py
+          if ($LASTEXITCODE -ne 0) { throw 'CONTROL_EXECUTION_ERROR' }
+      - name: Win32 desktop and candidate-process snapshot before main tests
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          python ci/tz410_win_resources.py --output evidence/TZ410_RESOURCES_BEFORE.json
+          if ($LASTEXITCODE -ne 0) { throw 'RESOURCE_BEFORE_ERROR' }
+      - name: 100 baseline and 100 patched functional tests, tool API, window observation
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          python ci/tz49_run_matrix.py
+          if ($LASTEXITCODE -ne 0) { throw 'FUNCTIONAL_MATRIX_ERROR' }
+      - name: Preserve separate unmodified stdout/stderr and diagnose CLIXML
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          python ci/tz410_clixml_channels.py
+          if ($LASTEXITCODE -ne 0) { throw 'CHANNEL_TESTS_FAILED' }
+      - name: Win32 desktop and candidate-process snapshot after main tests
+        shell: pwsh
+        if: always()
+        continue-on-error: true
+        run: |
+          python ci/tz410_win_resources.py --output evidence/TZ410_RESOURCES_AFTER.json
+          if ($LASTEXITCODE -ne 0) { throw 'RESOURCE_AFTER_ERROR' }
+          python ci/tz410_resource_audit.py evidence/TZ410_RESOURCES_BEFORE.json evidence/TZ410_RESOURCES_AFTER.json evidence/TZ410_RESOURCE_COMPARISON.json
+          if ($LASTEXITCODE -ne 0) { throw 'RESOURCE_AUDIT_ERROR' }
+      - name: Strict verdict — fail when controls cannot validate the observer
+        shell: pwsh
+        if: always()
+        run: |
+          python ci/tz410_final_verdict.py
+          if ($LASTEXITCODE -ne 0) { throw 'TZ410_EVIDENCE_INCOMPLETE_OR_CONTROLS_FAILED' }
+      - name: Upload evidence for 30 days if repository retention allows
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dc-tz410-calibrated-windows-evidence
+          path: evidence/
+          retention-days: 30
+          if-no-files-found: warn
