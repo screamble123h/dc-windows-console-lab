@@ -158,7 +158,7 @@ def main() -> int:
         try:
             start = subprocess.STARTUPINFO()
             start.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            start.wShowWindow = subprocess.SW_SHOWNORMAL
+            start.wShowWindow = 1  # Win32 SW_SHOWNORMAL; Python subprocess does not provide it
             child = subprocess.Popen(
                 ["cmd.exe", "/d", "/c", f"title {pos_marker} & ping -n 8 127.0.0.1 >NUL"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
