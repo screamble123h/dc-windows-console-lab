@@ -1,0 +1,4 @@
+FotoMag Windows Lab TZ4.10 one-time trigger
+Date: 2026-11-09
+Scope: branch-only GitHub-hosted Windows 2022, public repository, no deployment.
+All tests synthetic; production FotoMag workstations not contacted.
